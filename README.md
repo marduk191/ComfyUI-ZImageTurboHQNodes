@@ -1,6 +1,6 @@
 ﻿# ComfyUI ZImage Turbo HQ Nodes
 
-Self-contained custom nodes for Tongyi Z-Image-Turbo. Note that these have no real settings other than presets. They are easy mode quick nodes.
+Self-contained custom nodes for Tongyi Z-Image-Turbo. Note added easy and advanced nodes
 
 ## Included nodes
 - ZImageTurboConditioning
