@@ -1,0 +1,28 @@
+﻿name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build archive
+        run: |
+          mkdir -p release/ComfyUI-ZImageTurboHQNodes
+          cp __init__.py zimage_hq_nodes.py pyproject.toml README.md LICENSE CHANGELOG.md THIRD_PARTY_NOTICES.md release/ComfyUI-ZImageTurboHQNodes/
+          mkdir -p release/ComfyUI-ZImageTurboHQNodes/workflows
+          cp workflows/*.json release/ComfyUI-ZImageTurboHQNodes/workflows/
+          cd release
+          zip -r ../ComfyUI-ZImageTurboHQNodes-${{ github.ref_name }}.zip ComfyUI-ZImageTurboHQNodes
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ComfyUI-ZImageTurboHQNodes-${{ github.ref_name }}.zip
+          generate_release_notes: true
