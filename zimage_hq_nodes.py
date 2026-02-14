@@ -306,6 +306,65 @@ class ZImageTurboConditioning:
         return (positive, negative, positive_prompt)
 
 
+class ZImageTurboSinglePromptConditioning:
+    @classmethod
+    def INPUT_TYPES(cls):
+        devices = ["auto", "cpu"]
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                devices.append(f"cuda:{i}")
+
+        return {
+            "required": {
+                "clip": ("CLIP",),
+                "prompt": ("STRING", {"multiline": True, "default": "ultra detailed portrait, cinematic lighting, realistic skin texture"}),
+                "enhancement_profile": (["none", "capitan_daily", "capitan_literal"], {"default": "capitan_daily"}),
+                "seed": ("INT", {"default": 42, "min": 0, "max": 2147483647}),
+                "low_vram": ("BOOLEAN", {"default": False}),
+                "device": (devices, {"default": "auto"}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "STRING")
+    RETURN_NAMES = ("positive", "negative", "positive_prompt")
+    FUNCTION = "build"
+    CATEGORY = "zimage_turbo/hq"
+
+    def build(self, clip, prompt, enhancement_profile, seed, low_vram, device):
+        positive_prompt = prompt.strip()
+        positive = _encode_conditioning(clip, positive_prompt)
+
+        if enhancement_profile != "none":
+            dev = _safe_device(device)
+            positive = _capitan_basic(
+                positive,
+                strength=0.08 if enhancement_profile == "capitan_daily" else 0.06,
+                normalize=True,
+                add_self_attention=True,
+                mlp_hidden_mult=3 if enhancement_profile == "capitan_daily" else 4,
+                seed=seed,
+                low_vram=low_vram,
+                device=dev,
+            )
+            positive = _capitan_advanced(
+                positive,
+                strength=0.04 if enhancement_profile == "capitan_daily" else 0.06,
+                detail_boost=1.9 if enhancement_profile == "capitan_daily" else 2.2,
+                preserve_original=0.40 if enhancement_profile == "capitan_daily" else 0.45,
+                attention_strength=0.05,
+                high_pass_filter=True,
+                normalize=True,
+                add_self_attention=False,
+                mlp_hidden_mult=8 if enhancement_profile == "capitan_daily" else 12,
+                seed=seed,
+                low_vram=low_vram,
+                device=dev,
+            )
+
+        negative = _zero_conditioning(_encode_conditioning(clip, ""))
+        return (positive, negative, positive_prompt)
+
+
 class ZImageTurboLatentInit:
     @classmethod
     def INPUT_TYPES(cls):
@@ -473,6 +532,7 @@ class ZImageTurboTwoPassRefiner:
 
 NODE_CLASS_MAPPINGS = {
     "ZImageTurboConditioning": ZImageTurboConditioning,
+    "ZImageTurboSinglePromptConditioning": ZImageTurboSinglePromptConditioning,
     "ZImageTurboLatentInit": ZImageTurboLatentInit,
     "ZImageTurboSeedControl": ZImageTurboSeedControl,
     "ZImageTurboSamplingPlan": ZImageTurboSamplingPlan,
@@ -482,6 +542,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ZImageTurboConditioning": "ZImage Turbo Conditioning",
+    "ZImageTurboSinglePromptConditioning": "ZImage Turbo Single Prompt Conditioning",
     "ZImageTurboLatentInit": "ZImage Turbo Latent Init",
     "ZImageTurboSeedControl": "ZImage Turbo Seed Control",
     "ZImageTurboSamplingPlan": "ZImage Turbo Sampling Plan",
