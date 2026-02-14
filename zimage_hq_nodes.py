@@ -390,7 +390,6 @@ class ZImageTurboSampler:
                 "latent_image": ("LATENT",),
                 "seed": ("INT", {"default": 13371337, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
                 "mode": (["base_ultra", "base_balanced", "refine_subtle", "refine_normal", "refine_strong"], {"default": "base_ultra"}),
-                "sampling_profile": (["tongyi_default", "capitan_flow", "zflow_linear"], {"default": "capitan_flow"}),
             }
         }
 
@@ -399,8 +398,8 @@ class ZImageTurboSampler:
     FUNCTION = "sample"
     CATEGORY = "zimage_turbo/hq"
 
-    def sample(self, model, positive, negative, latent_image, seed, mode, sampling_profile):
-        steps, cfg, denoise, sampler_name, scheduler_name = ZImageTurboSamplingPlan().plan(mode, sampling_profile)
+    def sample(self, model, positive, negative, latent_image, seed, mode):
+        steps, cfg, denoise, sampler_name, scheduler_name = ZImageTurboSamplingPlan().plan(mode, "capitan_flow")
 
         out = nodes.common_ksampler(
             model,
@@ -430,7 +429,6 @@ class ZImageTurboTwoPassRefiner:
                 "seed": ("INT", {"default": 13371438, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
                 "upscale_by": ("FLOAT", {"default": 1.5, "min": 1.0, "max": 4.0, "step": 0.05}),
                 "strength": (["subtle", "normal", "strong"], {"default": "normal"}),
-                "sampling_profile": (["tongyi_default", "capitan_flow", "zflow_linear"], {"default": "capitan_flow"}),
             }
         }
 
@@ -439,13 +437,13 @@ class ZImageTurboTwoPassRefiner:
     FUNCTION = "refine"
     CATEGORY = "zimage_turbo/hq"
 
-    def refine(self, model, positive, negative, vae, image, seed, upscale_by, strength, sampling_profile):
+    def refine(self, model, positive, negative, vae, image, seed, upscale_by, strength):
         mode = {
             "subtle": "refine_subtle",
             "normal": "refine_normal",
             "strong": "refine_strong",
         }[strength]
-        steps, _, denoise, sampler_name, scheduler_name = ZImageTurboSamplingPlan().plan(mode, sampling_profile)
+        steps, _, denoise, sampler_name, scheduler_name = ZImageTurboSamplingPlan().plan(mode, "capitan_flow")
 
         pixels = image.movedim(-1, 1)
         upscaled = comfy.utils.common_upscale(
