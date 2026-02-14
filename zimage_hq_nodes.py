@@ -365,6 +365,85 @@ class ZImageTurboSinglePromptConditioning:
         return (positive, negative, positive_prompt)
 
 
+class ZImageTurboSinglePromptConditioningAdvanced:
+    @classmethod
+    def INPUT_TYPES(cls):
+        devices = ["auto", "cpu"]
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                devices.append(f"cuda:{i}")
+
+        return {
+            "required": {
+                "clip": ("CLIP",),
+                "prompt": ("STRING", {"multiline": True, "default": "ultra detailed portrait, cinematic lighting, realistic skin texture"}),
+                "seed": ("INT", {"default": 42, "min": 0, "max": 2147483647}),
+                "low_vram": ("BOOLEAN", {"default": False}),
+                "device": (devices, {"default": "auto"}),
+                "use_basic_enhancer": ("BOOLEAN", {"default": True}),
+                "basic_strength": ("FLOAT", {"default": 0.08, "min": -3.0, "max": 2.0, "step": 0.01}),
+                "basic_normalize": ("BOOLEAN", {"default": True}),
+                "basic_self_attention": ("BOOLEAN", {"default": True}),
+                "basic_mlp_hidden_mult": ("INT", {"default": 3, "min": 1, "max": 200, "step": 1}),
+                "use_advanced_enhancer": ("BOOLEAN", {"default": True}),
+                "adv_strength": ("FLOAT", {"default": 0.04, "min": -3.0, "max": 2.0, "step": 0.01}),
+                "adv_detail_boost": ("FLOAT", {"default": 1.9, "min": 0.0, "max": 4.0, "step": 0.1}),
+                "adv_preserve_original": ("FLOAT", {"default": 0.40, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "adv_attention_strength": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "adv_high_pass_filter": ("BOOLEAN", {"default": True}),
+                "adv_normalize": ("BOOLEAN", {"default": True}),
+                "adv_self_attention": ("BOOLEAN", {"default": False}),
+                "adv_mlp_hidden_mult": ("INT", {"default": 8, "min": 1, "max": 200, "step": 1}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "STRING")
+    RETURN_NAMES = ("positive", "negative", "positive_prompt")
+    FUNCTION = "build"
+    CATEGORY = "zimage_turbo/hq"
+
+    def build(
+        self, clip, prompt, seed, low_vram, device,
+        use_basic_enhancer, basic_strength, basic_normalize, basic_self_attention, basic_mlp_hidden_mult,
+        use_advanced_enhancer, adv_strength, adv_detail_boost, adv_preserve_original, adv_attention_strength,
+        adv_high_pass_filter, adv_normalize, adv_self_attention, adv_mlp_hidden_mult,
+    ):
+        positive_prompt = prompt.strip()
+        positive = _encode_conditioning(clip, positive_prompt)
+        dev = _safe_device(device)
+
+        if use_basic_enhancer:
+            positive = _capitan_basic(
+                positive,
+                strength=basic_strength,
+                normalize=basic_normalize,
+                add_self_attention=basic_self_attention,
+                mlp_hidden_mult=basic_mlp_hidden_mult,
+                seed=seed,
+                low_vram=low_vram,
+                device=dev,
+            )
+
+        if use_advanced_enhancer:
+            positive = _capitan_advanced(
+                positive,
+                strength=adv_strength,
+                detail_boost=adv_detail_boost,
+                preserve_original=adv_preserve_original,
+                attention_strength=adv_attention_strength,
+                high_pass_filter=adv_high_pass_filter,
+                normalize=adv_normalize,
+                add_self_attention=adv_self_attention,
+                mlp_hidden_mult=adv_mlp_hidden_mult,
+                seed=seed,
+                low_vram=low_vram,
+                device=dev,
+            )
+
+        negative = _zero_conditioning(_encode_conditioning(clip, ""))
+        return (positive, negative, positive_prompt)
+
+
 class ZImageTurboLatentInit:
     @classmethod
     def INPUT_TYPES(cls):
@@ -475,6 +554,53 @@ class ZImageTurboSampler:
         return (out[0], steps, cfg, denoise, sampler_name, scheduler_name)
 
 
+class ZImageTurboSamplerAdvanced:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "latent_image": ("LATENT",),
+                "seed": ("INT", {"default": 13371337, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                "mode": (["base_ultra", "base_balanced", "refine_subtle", "refine_normal", "refine_strong"], {"default": "base_ultra"}),
+                "sampling_profile": (["tongyi_default", "capitan_flow", "zflow_linear"], {"default": "capitan_flow"}),
+                "steps_override": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
+                "cfg_override": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 20.0, "step": 0.1}),
+                "denoise_override": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT", "INT", "FLOAT", "FLOAT", "STRING", "STRING")
+    RETURN_NAMES = ("samples", "steps", "cfg", "denoise", "sampler_name", "scheduler_name")
+    FUNCTION = "sample"
+    CATEGORY = "zimage_turbo/hq"
+
+    def sample(self, model, positive, negative, latent_image, seed, mode, sampling_profile, steps_override, cfg_override, denoise_override):
+        steps, cfg, denoise, sampler_name, scheduler_name = ZImageTurboSamplingPlan().plan(mode, sampling_profile)
+        if steps_override > 0:
+            steps = steps_override
+        if cfg_override > 0.0:
+            cfg = cfg_override
+        if denoise_override > 0.0:
+            denoise = denoise_override
+
+        out = nodes.common_ksampler(
+            model,
+            seed,
+            steps,
+            cfg,
+            sampler_name,
+            scheduler_name,
+            positive,
+            negative,
+            latent_image,
+            denoise=denoise,
+        )
+        return (out[0], steps, cfg, denoise, sampler_name, scheduler_name)
+
+
 class ZImageTurboTwoPassRefiner:
     @classmethod
     def INPUT_TYPES(cls):
@@ -530,22 +656,90 @@ class ZImageTurboTwoPassRefiner:
         return (decoded,)
 
 
+class ZImageTurboTwoPassRefinerAdvanced:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "vae": ("VAE",),
+                "image": ("IMAGE",),
+                "seed": ("INT", {"default": 13371438, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                "upscale_by": ("FLOAT", {"default": 1.5, "min": 1.0, "max": 4.0, "step": 0.05}),
+                "strength": (["subtle", "normal", "strong"], {"default": "normal"}),
+                "sampling_profile": (["tongyi_default", "capitan_flow", "zflow_linear"], {"default": "capitan_flow"}),
+                "steps_override": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
+                "denoise_override": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+    FUNCTION = "refine"
+    CATEGORY = "zimage_turbo/hq"
+
+    def refine(self, model, positive, negative, vae, image, seed, upscale_by, strength, sampling_profile, steps_override, denoise_override):
+        mode = {
+            "subtle": "refine_subtle",
+            "normal": "refine_normal",
+            "strong": "refine_strong",
+        }[strength]
+        steps, _, denoise, sampler_name, scheduler_name = ZImageTurboSamplingPlan().plan(mode, sampling_profile)
+        if steps_override > 0:
+            steps = steps_override
+        if denoise_override > 0.0:
+            denoise = denoise_override
+
+        pixels = image.movedim(-1, 1)
+        upscaled = comfy.utils.common_upscale(
+            pixels,
+            max(8, int(pixels.shape[3] * upscale_by)),
+            max(8, int(pixels.shape[2] * upscale_by)),
+            "lanczos",
+            "disabled",
+        ).movedim(1, -1)
+
+        latent = vae.encode(upscaled[:, :, :, :3])
+        sampled = nodes.common_ksampler(
+            model,
+            seed,
+            steps,
+            1.0,
+            sampler_name,
+            scheduler_name,
+            positive,
+            negative,
+            {"samples": latent},
+            denoise=denoise,
+        )[0]
+        decoded = vae.decode(sampled["samples"])
+        return (decoded,)
+
+
 NODE_CLASS_MAPPINGS = {
     "ZImageTurboConditioning": ZImageTurboConditioning,
     "ZImageTurboSinglePromptConditioning": ZImageTurboSinglePromptConditioning,
+    "ZImageTurboSinglePromptConditioningAdvanced": ZImageTurboSinglePromptConditioningAdvanced,
     "ZImageTurboLatentInit": ZImageTurboLatentInit,
     "ZImageTurboSeedControl": ZImageTurboSeedControl,
     "ZImageTurboSamplingPlan": ZImageTurboSamplingPlan,
     "ZImageTurboSampler": ZImageTurboSampler,
+    "ZImageTurboSamplerAdvanced": ZImageTurboSamplerAdvanced,
     "ZImageTurboTwoPassRefiner": ZImageTurboTwoPassRefiner,
+    "ZImageTurboTwoPassRefinerAdvanced": ZImageTurboTwoPassRefinerAdvanced,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ZImageTurboConditioning": "ZImage Turbo Conditioning",
     "ZImageTurboSinglePromptConditioning": "ZImage Turbo Single Prompt Conditioning",
+    "ZImageTurboSinglePromptConditioningAdvanced": "ZImage Turbo Single Prompt Conditioning Advanced",
     "ZImageTurboLatentInit": "ZImage Turbo Latent Init",
     "ZImageTurboSeedControl": "ZImage Turbo Seed Control",
     "ZImageTurboSamplingPlan": "ZImage Turbo Sampling Plan",
     "ZImageTurboSampler": "ZImage Turbo Sampler",
+    "ZImageTurboSamplerAdvanced": "ZImage Turbo Sampler Advanced",
     "ZImageTurboTwoPassRefiner": "ZImage Turbo Two Pass Refiner",
+    "ZImageTurboTwoPassRefinerAdvanced": "ZImage Turbo Two Pass Refiner Advanced",
 }
